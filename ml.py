@@ -61,8 +61,8 @@ def process_images_and_extract_dimensions(image_urls):
     return values, units
 
 # Load train and test data
-train_df = pd.read_csv('/workspaces/python/amazon_ml/student_resource_3/dataset/train.csv')
-test_df = pd.read_csv('/workspaces/python/amazon_ml/student_resource_3/dataset/test.csv')
+train_df = pd.read_csv('/workspaces/Amazon_hakethon/student_resource_3/dataset/train.csv')
+test_df = pd.read_csv('/workspaces/Amazon_hakethon/student_resource_3/dataset/test.csv')
 
 # Optional: Take only the first 20 rows for testing (comment out if not needed)
 train_df = train_df.head(20)
@@ -227,5 +227,5 @@ output_df = pd.DataFrame({
 })
 
 # Save output to CSV
-output_df.to_csv('/workspaces/python/amazon_ml/student_resource_3/output.csv', index=False)
+output_df.to_csv('output.csv', index=False)
 print("Output saved to output.csv")
