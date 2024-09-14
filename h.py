@@ -32,10 +32,10 @@ class ResNetMultiTaskModel(nn.Module):
         super(ResNetMultiTaskModel, self).__init__()
         self.resnet = models.resnet50(pretrained=True)
         self.resnet.fc = nn.Identity()  # Remove final layer
-        
+
         # Regression head for predicting numeric values
         self.regression_head = nn.Linear(2048, 1)  # Output 1 value (regression)
-        
+
         # Classification head for predicting units
         self.classification_head = nn.Linear(2048, num_units)  # Output number of units
 
@@ -48,11 +48,11 @@ class ResNetMultiTaskModel(nn.Module):
 # Function to load and preprocess image for Deep Learning model
 def preprocess_image_dl(image_path):
     image = Image.open(image_path).convert('RGB')
-    
+
     # Enhance contrast (optional but may improve DL accuracy)
     enhancer = ImageEnhance.Contrast(image)
     image = enhancer.enhance(1.5)
-    
+
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -118,6 +118,7 @@ def parse_entity_value(entity_value):
 # Train the Deep Learning model (limit training to 10 images)
 def train_resnet_model(dl_model, train_df, num_units, device, epochs=50):
     # Limit training data to the first 10 rows
+
     train_df = train_df.head(50)  # Train with only 10 images
 
     # Optimizer and loss functions
@@ -134,43 +135,43 @@ def train_resnet_model(dl_model, train_df, num_units, device, epochs=50):
             image_url = row['image_link']
             entity_value = row['entity_value']
             entity_name = row['entity_name']
-            
+
             # Download and preprocess image
             image_path = download_image(image_url, '/content/drive/MyDrive/ml/images')
             image = preprocess_image_dl(image_path).to(device)
-            
+
             # Parse value and unit
             value, unit = parse_entity_value(entity_value)
             if value is None or unit is None:
                 print(f"Warning: Value or Unit is None for {entity_name}. Skipping this instance.")
                 continue  # Skip invalid rows
-            
+
             # Check if the unit exists in the entity_unit_map
             if unit not in entity_unit_map.get(entity_name, []):
                 print(f"Warning: Unit '{unit}' not found in entity_unit_map for {entity_name}. Skipping this instance.")
                 continue  # Skip rows with invalid units
-            
+
             # Prepare target tensors
             value_target = torch.tensor([value], dtype=torch.float32).to(device)
             unit_target = torch.tensor([list(entity_unit_map[entity_name]).index(unit)], dtype=torch.long).to(device)
-            
+
             # Zero gradients
             optimizer.zero_grad()
-            
+
             # Forward pass
             predicted_value, predicted_unit_logits = dl_model(image)
-            
+
             # Calculate loss
             loss_value = criterion_regression(predicted_value, value_target)
             loss_unit = criterion_classification(predicted_unit_logits, unit_target)
             loss = loss_value + loss_unit
-            
+
             # Backward pass and optimization
             loss.backward()
             optimizer.step()
-            
+
             running_loss += loss.item()
-        
+
         print(f"Epoch [{epoch+1}/{epochs}], Loss: {running_loss/len(train_df)}")
 
     # Save the trained model
@@ -180,20 +181,22 @@ def train_resnet_model(dl_model, train_df, num_units, device, epochs=50):
 
 # Process the images using OCR first, fall back to DL model if OCR fails
 def process_images_with_fallback(test_df, image_folder, dl_model, device, limit=50):
+
     test_df = test_df.head(limit)  # Limit the dataframe to the first 10 images
+
     test_df['prediction'] = ""
-    
+
     for idx, row in tqdm(test_df.iterrows(), total=len(test_df)):
         image_url = row['image_link']
         entity_name = row['entity_name']
-        
+
         # Download image and preprocess
         image_path = download_image(image_url, image_folder)
-        
+
         # First, attempt OCR extraction
         extracted_text = extract_text(image_path)
         value, unit = extract_value_and_unit_ocr(extracted_text, entity_name)
-        
+
         # If OCR did not find valid data, fall back to Deep Learning model
         if value is None or unit is None:
             print(f"Falling back to DL model for {image_path}")
@@ -206,10 +209,10 @@ def process_images_with_fallback(test_df, image_folder, dl_model, device, limit=
                 predicted_unit = predicted_unit_logits.argmax(dim=1).item()
                 unit = list(entity_unit_map[entity_name])[predicted_unit]  # Map to correct unit
                 value = predicted_value
-        
+
         # Save prediction
         test_df.at[idx, 'prediction'] = f"{value} {unit}"
-    
+
     return test_df
 
 # Main function for training and combined model (OCR + DL fallback)
@@ -220,25 +223,25 @@ def main_train_and_test():
     TRAIN_CSV = os.path.join(DATASET_FOLDER, 'train.csv')
     TEST_CSV = os.path.join(DATASET_FOLDER, 'test.csv')
     OUTPUT_CSV = os.path.join(DATASET_FOLDER, 'test_out.csv')
-    
+
     # Load train data for training
     train_df = pd.read_csv(TRAIN_CSV)
-    
+
     # Load Deep Learning model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_units = max(len(v) for v in entity_unit_map.values())  # Calculate max number of units
     dl_model = ResNetMultiTaskModel(num_units).to(device)
-    
+
     # Train the model using train.csv (limit to 10 images)
     print("Training ResNet Multi-task model with 10 images from train.csv...")
     train_resnet_model(dl_model, train_df, num_units, device, epochs=50)
-    
+
     # Load test data
     test_df = pd.read_csv(TEST_CSV)
-    
+
     # Process images and generate predictions (limit to 10 images)
     test_df = process_images_with_fallback(test_df, IMAGE_FOLDER, dl_model, device, limit=50)
-    
+
     # Save results
     test_df[['index', 'prediction']].to_csv(OUTPUT_CSV, index=False)
     print(f"Predictions saved to {OUTPUT_CSV}")
