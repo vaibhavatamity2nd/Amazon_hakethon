@@ -70,26 +70,17 @@ def download_image(image_link, image_folder):
 
 # Parse the entity_value into numeric value and unit
 def parse_entity_value(entity_value):
-    # Handle cases where entity_value might contain ranges (e.g., '15 kilogram to 20 kilogram')
     try:
-        # Use regular expressions to extract only the first valid number and unit
-        value_match = re.search(r"(\d+(\.\d+)?)", entity_value)  # Find the first numeric value
-        unit_match = re.search(r"\b[a-zA-Z]+\b", entity_value)  # Find the first unit string
-        
-        if value_match and unit_match:
-            value = float(value_match.group(0))  # Extract numeric value
-            unit = unit_match.group(0).strip()   # Extract the first unit and strip any surrounding whitespace
-            return value, unit
-        else:
-            return None, None
-    except Exception as e:
-        print(f"Error parsing entity_value: {entity_value}, Error: {e}")
+        value, unit = entity_value.split(maxsplit=1)
+        value = float(value)
+        return value, unit
+    except:
         return None, None
 
-# Train the Deep Learning model (limit training to 50 images)
-def train_resnet_model(dl_model, train_df, num_units, device, epochs=50):
-    # Limit training data to the first 50 rows
-    train_df = train_df.head(50)  # Train with only 50 images
+# Train the Deep Learning model (limit training to 10 images)
+def train_resnet_model(dl_model, train_df, num_units, device, epochs=10):
+    # Limit training data to the first 10 rows
+    train_df = train_df.head(10)  # Train with only 10 images
 
     # Optimizer and loss functions
     optimizer = optim.Adam(dl_model.parameters(), lr=0.001)
@@ -143,8 +134,8 @@ def train_resnet_model(dl_model, train_df, num_units, device, epochs=50):
     print("Model saved!")
 
 # Process the images using OCR first, fall back to DL model if OCR fails
-def process_images_with_fallback(test_df, image_folder, dl_model, device, limit=50):
-    test_df = test_df.head(limit)  # Limit the dataframe to the first 50 images
+def process_images_with_fallback(test_df, image_folder, dl_model, device, limit=10):
+    test_df = test_df.head(limit)  # Limit the dataframe to the first 10 images
     test_df['prediction'] = ""
     
     for idx, row in tqdm(test_df.iterrows(), total=len(test_df)):
@@ -193,15 +184,15 @@ def main_train_and_test():
     num_units = max(len(v) for v in entity_unit_map.values())  # Calculate max number of units
     dl_model = ResNetMultiTaskModel(num_units).to(device)
     
-    # Train the model using train.csv (limit to 50 images)
-    print("Training ResNet Multi-task model with 50 images from train.csv...")
-    train_resnet_model(dl_model, train_df, num_units, device, epochs=50)
+    # Train the model using train.csv (limit to 10 images)
+    print("Training ResNet Multi-task model with 10 images from train.csv...")
+    train_resnet_model(dl_model, train_df, num_units, device, epochs=10)
     
     # Load test data
     test_df = pd.read_csv(TEST_CSV)
     
-    # Process images and generate predictions (limit to 50 images)
-    test_df = process_images_with_fallback(test_df, IMAGE_FOLDER, dl_model, device, limit=50)
+    # Process images and generate predictions (limit to 10 images)
+    test_df = process_images_with_fallback(test_df, IMAGE_FOLDER, dl_model, device, limit=10)
     
     # Save results
     test_df[['index', 'prediction']].to_csv(OUTPUT_CSV, index=False)
@@ -209,5 +200,5 @@ def main_train_and_test():
 
 if __name__ == "__main__":
     # Run the training and prediction pipeline
-    print("Running training and combined OCR + Deep Learning model with 50 images...")
+    print("Running training and combined OCR + Deep Learning model with 10 images...")
     main_train_and_test()
