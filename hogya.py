@@ -1,5 +1,6 @@
 import os
 import torch
+import sys 
 import easyocr  # OCR library for text extraction
 import pandas as pd
 import re
@@ -11,6 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms as transforms
 
+
 # Define the entity-unit map with the full and short forms of measurement units
 entity_unit_map = {
     'width': {'centimetre', 'cm', 'foot', 'ft', 'inch', 'in', 'metre', 'm', 'millimetre', 'mm', 'yard', 'yd'},
@@ -20,7 +22,7 @@ entity_unit_map = {
     'maximum_weight_recommendation': {'gram', 'g', 'kilogram', 'kg', 'microgram', 'μg', 'milligram', 'mg', 'ounce', 'oz', 'pound', 'lb', 'ton'},
     'voltage': {'volt', 'V', 'millivolt', 'mV', 'kilovolt', 'kV'},
     'wattage': {'watt', 'W', 'kilowatt', 'kW'},
-    'item_volume': {'litre', 'L', 'millilitre', 'ml', 'centilitre', 'cl', 'cubic foot', 'cu ft', 'cubic inch', 'cu in', 
+    'item_volume': {'litre', 'L', 'millilitre', 'ml', 'centilitre', 'cl', 'cubic foot', 'cu ft', 'cubic inch', 'cu in',
                     'cup', 'fluid ounce', 'fl oz', 'gallon', 'imperial gallon', 'quart', 'pint'}
 }
 
@@ -33,10 +35,10 @@ class ResNetMultiTaskModel(nn.Module):
         super(ResNetMultiTaskModel, self).__init__()
         self.resnet = models.resnet50(pretrained=True)
         self.resnet.fc = nn.Identity()  # Remove the final fully connected layer
-        
+
         # Regression head for predicting numeric values
         self.regression_head = nn.Linear(2048, 1)  # Outputs a single value (regression task)
-        
+
         # Classification head for predicting units
         self.classification_head = nn.Linear(2048, num_units)  # Outputs one of the possible units
 
@@ -49,11 +51,11 @@ class ResNetMultiTaskModel(nn.Module):
 # Function to load and preprocess image for Deep Learning model
 def preprocess_image_dl(image_path):
     image = Image.open(image_path).convert('RGB')
-    
+
     # Enhance contrast to improve model's performance (optional)
     enhancer = ImageEnhance.Contrast(image)
     image = enhancer.enhance(1.5)
-    
+
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -99,16 +101,17 @@ def extract_value_and_unit_ocr(extracted_text, entity_name):
     value_match = re.search(r"(\d+(\.\d+)?)", extracted_text)
     if value_match:
         value = float(value_match.group(0))  # Convert the matched string to a float
+        value = abs(value)  # Ensure the value is non-negative
     else:
         return None, None  # No valid numeric value found
-    
+
     # Look for the unit in the allowed units for the entity
     allowed_units = entity_unit_map.get(entity_name, [])
     for unit in allowed_units:
         if unit in extracted_text:
             expanded_unit = expand_unit_short_forms(unit)
             return value, expanded_unit
-    
+
     return value, None  # Return value if found, even if the unit is missing
 
 # Function to train the Deep Learning model
@@ -119,44 +122,44 @@ def train_resnet_model(dl_model, train_df, num_units, device, epochs=1):
     criterion_classification = nn.CrossEntropyLoss()  # For classification (unit prediction)
 
     dl_model.train()  # Set model to training mode
-    
+
     for epoch in range(epochs):
         running_loss = 0.0
         for idx, row in tqdm(train_df.iterrows(), total=len(train_df)):
             image_url = row['image_link']
             entity_value = row['entity_value']
             entity_name = row['entity_name']
-            
+
             # Download and preprocess image
             image_path = download_image(image_url, '/content/ml/images/')
             image = preprocess_image_dl(image_path).to(device)
-            
+
             # Parse value and unit from the data
             value, unit = parse_entity_value(entity_value)
             if value is None or unit is None:
                 continue  # Skip invalid rows
-            
+
             # Prepare target tensors
             value_target = torch.tensor([value], dtype=torch.float32).to(device)
             unit_target = torch.tensor([list(entity_unit_map[entity_name]).index(unit)], dtype=torch.long).to(device)
-            
+
             # Zero gradients
             optimizer.zero_grad()
-            
+
             # Forward pass
             predicted_value, predicted_unit_logits = dl_model(image)
-            
+
             # Compute loss
             loss_value = criterion_regression(predicted_value, value_target)
             loss_unit = criterion_classification(predicted_unit_logits, unit_target)
             loss = loss_value + loss_unit
-            
+
             # Backward pass and optimization
             loss.backward()
             optimizer.step()
-            
+
             running_loss += loss.item()
-        
+
         print(f"Epoch [{epoch+1}/{epochs}], Loss: {running_loss/len(train_df)}")
 
     # Save the trained model
@@ -167,7 +170,7 @@ def train_resnet_model(dl_model, train_df, num_units, device, epochs=1):
 def download_image(image_url, image_folder):
     if not os.path.exists(image_folder):
         os.makedirs(image_folder)
-    
+
     image_filename = os.path.join(image_folder, os.path.basename(image_url))
     urlretrieve(image_url, image_filename)
     return image_filename
@@ -176,19 +179,19 @@ def download_image(image_url, image_folder):
 def process_images_with_fallback(test_df, image_folder, dl_model, device, limit=51):
     test_df = test_df.head(limit)
     test_df['prediction'] = ""
-    
+
     for idx, row in tqdm(test_df.iterrows(), total=len(test_df)):
         image_url = row['image_link']
         entity_name = row['entity_name']
-        
+
         # Download and preprocess image
         image_path = download_image(image_url, image_folder)
-        
+
         # First attempt OCR extraction
         extracted_text = extract_text(image_path)
         value, unit = extract_value_and_unit_ocr(extracted_text, entity_name)
-        
-        # If OCR fails to extract valid data, fall back to Deep Learning model
+
+        # If OCR fails to extract valid data or unit, fall back to Deep Learning model
         if value is None or unit is None:
             print(f"Falling back to DL model for {image_path}")
             image_dl = preprocess_image_dl(image_path).to(device)
@@ -196,19 +199,70 @@ def process_images_with_fallback(test_df, image_folder, dl_model, device, limit=
             with torch.no_grad():
                 predicted_value, predicted_unit_logits = dl_model(image_dl)
                 predicted_value = predicted_value.item()
-                
+
+                # Ensure that the predicted value is non-negative
+                predicted_value = abs(predicted_value)
+
                 predicted_unit = predicted_unit_logits.argmax(dim=1).item()
                 units_list = list(entity_unit_map.get(entity_name, []))
                 if predicted_unit >= len(units_list):
-                    unit = "unknown"  # Handle invalid unit case
+                    unit = None  # Handle invalid unit case
+                    value = None  # Also set value to None if no valid unit is found
                 else:
                     unit = units_list[predicted_unit]  # Map to correct unit
+                    value = predicted_value
 
-                value = predicted_value
-        
-        test_df.at[idx, 'prediction'] = f"{value} {unit}"
-    
+        # Skip invalid rows if value or unit is None
+        if value is not None and unit is not None:
+            test_df.at[idx, 'prediction'] = f"{value} {unit}"
+        else:
+            test_df.at[idx, 'prediction'] = ""  # Leave empty if prediction is invalid
+
     return test_df
+
+
+# Sanity check function to ensure correctness
+def sanity_check(test_filename, output_filename):
+    # Check if the file exists and is a valid CSV file
+    def check_file(filename):
+        if not filename.lower().endswith('.csv'):
+            raise ValueError("Only CSV files are allowed.")
+        if not os.path.exists(filename):
+            raise FileNotFoundError(f"Filepath: {filename} invalid or not found.")
+    
+    check_file(test_filename)
+    check_file(output_filename)
+    
+    try:
+        test_df = pd.read_csv(test_filename)
+        output_df = pd.read_csv(output_filename)
+    except Exception as e:
+        raise ValueError(f"Error reading the CSV files: {e}")
+    
+    if 'index' not in test_df.columns:
+        raise ValueError("Test CSV file must contain the 'index' column.")
+    
+    if 'index' not in output_df.columns or 'prediction' not in output_df.columns:
+        raise ValueError("Output CSV file must contain 'index' and 'prediction' columns.")
+    
+    missing_index = set(test_df['index']).difference(set(output_df['index']))
+    if len(missing_index) != 0:
+        print(f"Missing index in output file: {missing_index}")
+        
+    extra_index = set(output_df['index']).difference(set(test_df['index']))
+    if len(extra_index) != 0:
+        print(f"Extra index in output file: {extra_index}")
+    
+    output_df.apply(lambda x: parse_string(x['prediction']), axis=1)
+    print(f"Parsing successful for file: {output_filename}")
+
+def parse_string(prediction):
+    # Simple parsing to ensure correct format of prediction
+    pattern = re.compile(r'^\d+(\.\d+)?\s[a-zA-Z\s]+$')
+    if not pattern.match(prediction):
+        raise ValueError(f"Invalid prediction format: {prediction}")
+    return prediction
+
 
 # Main function to combine OCR and DL model for prediction
 def main_combined_model():
@@ -216,17 +270,20 @@ def main_combined_model():
     IMAGE_FOLDER = '/content/drive/MyDrive/ml/images'
     TEST_CSV = os.path.join(DATASET_FOLDER, 'test.csv')
     OUTPUT_CSV = os.path.join(DATASET_FOLDER, 'test_out.csv')
-    
+
     test_df = pd.read_csv(TEST_CSV)
-    
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_units = max(len(v) for v in entity_unit_map.values())  # Maximum number of units across all entities
     dl_model = ResNetMultiTaskModel(num_units).to(device)
-    
+
     test_df = process_images_with_fallback(test_df, IMAGE_FOLDER, dl_model, device, limit=51)
-    
+
     test_df[['index', 'prediction']].to_csv(OUTPUT_CSV, index=False)
     print(f"Predictions saved to {OUTPUT_CSV}")
+
+    # Run sanity check after predictions
+    sanity_check(TEST_CSV, OUTPUT_CSV)
 
 if __name__ == "__main__":
     main_combined_model()
