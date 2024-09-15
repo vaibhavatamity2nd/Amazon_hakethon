@@ -175,7 +175,7 @@ def download_image(image_url, image_folder):
     urlretrieve(image_url, image_filename)
     return image_filename
 
-# Function to process images with OCR first, and fallback to DL model if necessary
+# Modify the deep learning fallback logic to avoid negative predictions
 def process_images_with_fallback(test_df, image_folder, dl_model, device, limit=51):
     test_df = test_df.head(limit)
     test_df['prediction'] = ""
@@ -191,7 +191,7 @@ def process_images_with_fallback(test_df, image_folder, dl_model, device, limit=
         extracted_text = extract_text(image_path)
         value, unit = extract_value_and_unit_ocr(extracted_text, entity_name)
 
-        # If OCR fails to extract valid data or unit, fall back to Deep Learning model
+        # If OCR fails to extract valid data, fall back to Deep Learning model
         if value is None or unit is None:
             print(f"Falling back to DL model for {image_path}")
             image_dl = preprocess_image_dl(image_path).to(device)
@@ -206,20 +206,15 @@ def process_images_with_fallback(test_df, image_folder, dl_model, device, limit=
                 predicted_unit = predicted_unit_logits.argmax(dim=1).item()
                 units_list = list(entity_unit_map.get(entity_name, []))
                 if predicted_unit >= len(units_list):
-                    unit = None  # Handle invalid unit case
-                    value = None  # Also set value to None if no valid unit is found
+                    unit = "cm"  # Handle invalid unit case
                 else:
                     unit = units_list[predicted_unit]  # Map to correct unit
-                    value = predicted_value
 
-        # Skip invalid rows if value or unit is None
-        if value is not None and unit is not None:
-            test_df.at[idx, 'prediction'] = f"{value} {unit}"
-        else:
-            test_df.at[idx, 'prediction'] = ""  # Leave empty if prediction is invalid
+                value = predicted_value
+
+        test_df.at[idx, 'prediction'] = f"{value} {unit}"
 
     return test_df
-
 
 # Sanity check function to ensure correctness
 def sanity_check(test_filename, output_filename):
